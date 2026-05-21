@@ -16,7 +16,7 @@ def safe_query(db_id: str, **kwargs) -> list[dict]:
 
     try:
         while True:
-            params = {"database_id": db_id, **kwargs}
+            params = {"database_id": db_id, **{k: v for k, v in kwargs.items() if v is not None}}
             if cursor:
                 params["start_cursor"] = cursor
 

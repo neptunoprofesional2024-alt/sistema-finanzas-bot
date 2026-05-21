@@ -57,7 +57,7 @@ def get_meta_ingresos_mes() -> float:
     pages = safe_query(NOTION_PROYECCIONES_INGRESOS_DB_ID)
     total = 0.0
     for page in pages:
-        monto = page["properties"].get("Monto Proyectado.", {}).get("number") or 0
+        monto = page["properties"].get("Meta de ingreso", {}).get("number") or 0
         total += monto
     return total
 
@@ -139,7 +139,7 @@ _GASTO_PROYECCION_MAP: dict = {
     # Alimentación
     "Restaurantes":                   "Restaurants\xa0",
     "Comida en Delivery":             "Restaurants\xa0",
-    "Compras de Alimentación":        "Alimentación\xa0de Hogar ",
+    "Compras de Alimentación":        "Alimentación\xa0Mensual",
     # Hogar
     "Alquiler mensual":               "Alquiler o Hipoteca ",
     "Factura agua Mensual":           "Factura de agua",
@@ -165,7 +165,7 @@ _GASTO_PROYECCION_MAP: dict = {
     "Compras ocasionales ( ropa )":   None,
     "Regalos y propinas":             None,
     # Sección OTROS — búsqueda por nombre (contains fallback si hay variaciones Unicode)
-    "Vacaciones":                     "VIAJE A LA PLAYA CON AMIGOS",
+    "Vacaciones":                     "VIAJE A LA PLAYA CON AMIGOS ",
 }
 
 # Mapeo de keywords en descripción → fila exacta en PROYECCIONES para categoria "Ahorros"

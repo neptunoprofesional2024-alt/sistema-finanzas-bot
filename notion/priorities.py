@@ -36,7 +36,7 @@ _CONCEPTO_CONFIG: dict = {
     "Alimentación hogar": {
         "dia_vencimiento": None,
         "tipo": "alimentacion",
-        "proyeccion_fila": "Alimentación\xa0de Hogar ",
+        "proyeccion_fila": "Alimentación\xa0Mensual",
         "monto_fijo": 212,
     },
     "Recarga/plan": {
