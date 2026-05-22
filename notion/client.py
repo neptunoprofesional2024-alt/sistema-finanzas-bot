@@ -3,9 +3,14 @@ from notion_client import Client
 from notion_client.errors import APIResponseError
 from config.settings import NOTION_TOKEN
 
+_client: Client | None = None
+
 
 def get_client() -> Client:
-    return Client(auth=NOTION_TOKEN)
+    global _client
+    if _client is None:
+        _client = Client(auth=NOTION_TOKEN)
+    return _client
 
 
 def safe_query(db_id: str, **kwargs) -> list[dict]:

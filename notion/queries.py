@@ -1,4 +1,6 @@
 from __future__ import annotations
+import calendar
+import re
 from datetime import datetime, date
 from config.settings import (
     NOTION_INGRESOS_DB_ID,
@@ -9,6 +11,13 @@ from config.settings import (
     NOTION_PRIORIDADES_DB_ID,
 )
 from notion.client import safe_query, update_page
+
+# Nombres en Notion que difieren del nombre a mostrar al usuario
+_DISPLAY_NAME_OVERRIDE = {
+    "Restaurants": "Restaurantes",
+}
+
+_WS_RE = re.compile(r"[\s\xa0]+")
 
 
 def _month_filter(date_prop: str) -> dict:
@@ -57,7 +66,7 @@ def get_meta_ingresos_mes() -> float:
     pages = safe_query(NOTION_PROYECCIONES_INGRESOS_DB_ID)
     total = 0.0
     for page in pages:
-        monto = page["properties"].get("Meta de ingreso", {}).get("number") or 0
+        monto = page["properties"].get("Monto Proyectado.", {}).get("number") or 0
         total += monto
     return total
 
@@ -494,7 +503,6 @@ def update_prioridad(descripcion: str, monto_pagado: float) -> None:
 
 def get_sugerencias_ahorro() -> dict:
     """Analiza metas incompletas y devuelve sugerencias de ahorro diario para el mes."""
-    import calendar
     hoy = date.today()
     dias_en_mes = calendar.monthrange(hoy.year, hoy.month)[1]
     dias_restantes = max(dias_en_mes - hoy.day + 1, 1)
@@ -579,6 +587,108 @@ def get_resumen_mes_anterior() -> dict:
         "ahorros": get_ahorros(),
         "resultado": round(total_ingresos - total_gastos, 2),
     }
+
+
+_MESES_ES = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+             "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def get_analisis_completo() -> dict:
+    """Lee todas las tablas del mes actual para análisis inteligente de lenguaje natural."""
+    hoy = date.today()
+    dias_en_mes = calendar.monthrange(hoy.year, hoy.month)[1]
+    dias_transcurridos = hoy.day
+    dias_restantes = max(dias_en_mes - hoy.day, 1)
+    mes_nombre = _MESES_ES[hoy.month].capitalize()
+
+    # Gastos proyecciones
+    gastos_filas = []
+    for p in safe_query(NOTION_PROYECCIONES_GASTOS_DB_ID):
+        props = p["properties"]
+        title_parts = props.get("Egreso determinado ", {}).get("title", [])
+        nombre = title_parts[0]["plain_text"] if title_parts else ""
+        real = props.get("$ Real ", {}).get("number") or 0
+        proyectado = props.get("$ Proyección", {}).get("number") or 0
+        etiqueta = (props.get("Etiquetas", {}).get("status") or {}).get("name", "")
+        if not nombre or proyectado == 0:
+            continue
+        nombre_display = _WS_RE.sub(" ", nombre).strip()
+        nombre_display = _DISPLAY_NAME_OVERRIDE.get(nombre_display, nombre_display)
+        gastos_filas.append({
+            "nombre": nombre,
+            "nombre_display": nombre_display,
+            "real": real,
+            "proyectado": proyectado,
+            "etiqueta": etiqueta,
+            "exceso": round(real - proyectado, 2) if real > proyectado else 0,
+            "pct_usado": round(real / proyectado * 100) if proyectado > 0 else 0,
+        })
+
+    # Ingresos proyecciones
+    ingresos_por_cat = []
+    total_real_ing = 0.0
+    total_meta_ing = 0.0
+    for p in safe_query(NOTION_PROYECCIONES_INGRESOS_DB_ID):
+        props = p["properties"]
+        cat = (props.get("Descripción de Ingreso", {}).get("select") or {}).get("name", "")
+        real = props.get("Ganancias Reales ", {}).get("number") or 0
+        meta = props.get("Monto Proyectado.", {}).get("number") or 0
+        if cat:
+            ingresos_por_cat.append({"categoria": cat, "real": real, "meta": meta})
+            total_real_ing += real
+            total_meta_ing += meta
+
+    daily_rate = total_real_ing / dias_transcurridos if dias_transcurridos > 0 else 0
+    proyectado_fin = round(daily_rate * dias_en_mes)
+    necesario_dia = (
+        round((total_meta_ing - total_real_ing) / dias_restantes)
+        if dias_restantes > 0 and total_real_ing < total_meta_ing else 0
+    )
+
+    ahorros = get_ahorros()
+    total_ahorrado = sum(a["ahorrado"] for a in ahorros)
+    total_meta_ahorro = sum(a["proyectado"] for a in ahorros)
+
+    return {
+        "hoy": hoy,
+        "mes_nombre": mes_nombre,
+        "dias_transcurridos": dias_transcurridos,
+        "dias_restantes": dias_restantes,
+        "gastos_filas": gastos_filas,
+        "ingresos": {
+            "total_real": round(total_real_ing, 2),
+            "total_meta": round(total_meta_ing, 2),
+            "pct": round(total_real_ing / total_meta_ing * 100) if total_meta_ing > 0 else 0,
+            "proyectado_fin": proyectado_fin,
+            "necesario_dia": necesario_dia,
+            "por_categoria": ingresos_por_cat,
+        },
+        "ahorros": ahorros,
+        "total_ahorrado": round(total_ahorrado, 2),
+        "total_meta_ahorro": round(total_meta_ahorro, 2),
+        "pct_ahorro": round(total_ahorrado / total_meta_ahorro * 100) if total_meta_ahorro > 0 else 0,
+    }
+
+
+def get_transacciones_categoria(categoria_notion: str, n: int = 3) -> list[dict]:
+    """Últimas n transacciones de una categoría de gasto en el mes actual."""
+    pages = safe_query(
+        NOTION_GASTOS_DB_ID,
+        filter={"and": [
+            _month_filter("Fecha"),
+            {"property": "Detalle del gasto. ", "select": {"equals": categoria_notion}},
+        ]},
+        sorts=[{"property": "Fecha", "direction": "descending"}],
+        page_size=n,
+    )
+    result = []
+    for p in pages:
+        props = p["properties"]
+        titulo = (props.get("Descripción ", {}).get("title") or [{}])[0].get("plain_text", "")
+        monto = props.get("Cantidad ", {}).get("number") or 0
+        fecha_str = (props.get("Fecha", {}).get("date") or {}).get("start", "")
+        result.append({"descripcion": titulo, "monto": monto, "fecha": fecha_str})
+    return result
 
 
 def get_balance() -> dict:
