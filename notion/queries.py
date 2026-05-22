@@ -520,6 +520,67 @@ def get_sugerencias_ahorro() -> dict:
     }
 
 
+def get_resumen_mes_anterior() -> dict:
+    """Lee gastos, ingresos, proyecciones y ahorros del mes anterior."""
+    import calendar as cal
+    hoy = date.today()
+    if hoy.month == 1:
+        year, month = hoy.year - 1, 12
+    else:
+        year, month = hoy.year, hoy.month - 1
+
+    start = f"{year}-{month:02d}-01"
+    if month == 12:
+        end = f"{year + 1}-01-01"
+    else:
+        end = f"{year}-{month + 1:02d}-01"
+
+    filtro = {"and": [
+        {"property": "Fecha", "date": {"on_or_after": start}},
+        {"property": "Fecha", "date": {"before": end}},
+    ]}
+
+    # Ingresos del mes anterior
+    ingresos_por_cat: dict = {}
+    total_ingresos = 0.0
+    for p in safe_query(NOTION_INGRESOS_DB_ID, filter=filtro):
+        cat = (p["properties"].get("Descripción de Ingreso", {}).get("select") or {}).get("name", "Otros")
+        monto = p["properties"].get("Monto", {}).get("number") or 0
+        ingresos_por_cat[cat] = round(ingresos_por_cat.get(cat, 0.0) + monto, 2)
+        total_ingresos += monto
+
+    # Gastos del mes anterior
+    gastos_por_cat: dict = {}
+    total_gastos = 0.0
+    for p in safe_query(NOTION_GASTOS_DB_ID, filter=filtro):
+        cat = (p["properties"].get("Detalle del gasto. ", {}).get("select") or {}).get("name", "Otros")
+        monto = p["properties"].get("Cantidad ", {}).get("number") or 0
+        gastos_por_cat[cat] = round(gastos_por_cat.get(cat, 0.0) + monto, 2)
+        total_gastos += monto
+
+    # Metas de proyecciones (sin filtro de fecha — son metas mensuales fijas)
+    meta_ingresos = get_meta_ingresos_mes()
+    meta_gastos = sum(
+        (p["properties"].get("$ Proyección", {}).get("number") or 0)
+        for p in safe_query(NOTION_PROYECCIONES_GASTOS_DB_ID)
+    )
+
+    top_gastos = sorted(gastos_por_cat.items(), key=lambda x: x[1], reverse=True)[:3]
+
+    return {
+        "year": year,
+        "month": month,
+        "total_ingresos": round(total_ingresos, 2),
+        "meta_ingresos": round(meta_ingresos, 2),
+        "ingresos_por_cat": ingresos_por_cat,
+        "total_gastos": round(total_gastos, 2),
+        "meta_gastos": round(meta_gastos, 2),
+        "top_gastos": top_gastos,
+        "ahorros": get_ahorros(),
+        "resultado": round(total_ingresos - total_gastos, 2),
+    }
+
+
 def get_balance() -> dict:
     """Resumen completo del mes para /balance."""
     ingresos_real = get_ingresos_mes()

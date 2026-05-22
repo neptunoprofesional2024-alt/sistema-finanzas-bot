@@ -235,6 +235,50 @@ def prioridades_mensaje(prioridades: list[dict], todas: bool = False) -> str:
     return "\n\n".join(bloques)
 
 
+_MESES_ES_LARGO = ["", "enero", "febrero", "marzo", "abril", "mayo", "junio",
+                   "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def reporte_mensual_mensaje(data: dict) -> str:
+    mes = _MESES_ES_LARGO[data["month"]].upper()
+    anio = data["year"]
+
+    ti = data["total_ingresos"]
+    mi = data["meta_ingresos"]
+    pct_i = f"{ti / mi * 100:.0f}%" if mi > 0 else "—"
+
+    tg = data["total_gastos"]
+    mg = data["meta_gastos"]
+    res = data["resultado"]
+
+    lineas = [f"📊 *RESUMEN FINANCIERO — {mes} {anio}*\n"]
+
+    lineas.append("💰 *INGRESOS*")
+    lineas.append(f"Total real: *{_fmt_monto(ti)}* de {_fmt_monto(mi)} proyectados ({pct_i})")
+    for cat, monto in sorted(data["ingresos_por_cat"].items(), key=lambda x: x[1], reverse=True):
+        lineas.append(f"  • {cat}: {_fmt_monto(monto)}")
+
+    lineas.append("\n💸 *GASTOS*")
+    lineas.append(f"Total gastado: *{_fmt_monto(tg)}* de {_fmt_monto(mg)} proyectados")
+    if data["top_gastos"]:
+        lineas.append("Top 3 categorías:")
+        for i, (cat, monto) in enumerate(data["top_gastos"], 1):
+            lineas.append(f"  {i}. {cat}: {_fmt_monto(monto)}")
+
+    if data["ahorros"]:
+        lineas.append("\n🏦 *AHORROS*")
+        for a in data["ahorros"]:
+            icono = "✅" if a["estado"] == "LISTO" else ("🔄" if a["estado"] == "INCOMPLETO" else "❌")
+            nombre = _nombre_limpio(a["nombre"])
+            lineas.append(f"  {icono} {nombre}: {_fmt_monto(a['ahorrado'])}/{_fmt_monto(a['proyectado'])}")
+
+    lineas.append("\n📈 *BALANCE FINAL*")
+    lineas.append(f"Resultado: *{_fmt_monto(res)}*")
+    lineas.append("Cerraste con superávit 💪" if res >= 0 else "Cerraste con déficit ⚠️")
+
+    return "\n".join(lineas)
+
+
 def error_notion() -> str:
     return "⚠️ No pude conectar con Notion ahora mismo. Intenta de nuevo en un momento."
 

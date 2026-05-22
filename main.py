@@ -33,9 +33,12 @@ def _start_health_server() -> None:
             self.wfile.write(b"OK")
 
         def log_message(self, *args):
-            pass  # silencia los logs de acceso HTTP
+            pass
 
-    server = HTTPServer(("0.0.0.0", port), _Handler)
+    class _ReuseHTTPServer(HTTPServer):
+        allow_reuse_address = True
+
+    server = _ReuseHTTPServer(("0.0.0.0", port), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     logger.info(f"Health-check server escuchando en puerto {port}.")
