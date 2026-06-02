@@ -642,22 +642,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
 
     elif data == "lote_revisar":
+        # Solo muestra el resumen de nuevo — NO inicia revisión individual.
+        # Evita el flujo uno-a-uno que causaba duplicados.
         transacciones = context.user_data.get(CTX_PENDIENTES, [])
         if not transacciones:
             await query.edit_message_text("⚠️ No hay transacciones pendientes.")
             return
-        # Mostrar la primera para revisión individual
-        t = transacciones[0]
-        context.user_data[CTX_INDIVIDUAL] = t
-        context.user_data[CTX_PENDIENTES] = transacciones[1:]  # cola restante
+        teclado = InlineKeyboardMarkup([[
+            InlineKeyboardButton("✅ Registrar todas", callback_data="lote_confirmar"),
+            InlineKeyboardButton("❌ Cancelar", callback_data="lote_cancelar"),
+        ]])
         await query.edit_message_text(
-            confirmar_individual(t),
-            reply_markup=_teclado_confirmacion_individual(),
+            resumen_lote(transacciones),
+            reply_markup=teclado,
         )
 
-    # ── Flujo individual ──
+    elif data == "lote_cancelar":
+        context.user_data.pop(CTX_PENDIENTES, None)
+        await query.edit_message_text("❌ Registro cancelado.")
+
+    # ── Flujo individual (solo para 1 transacción de texto con baja confianza) ──
     elif data == "ind_confirmar":
         t = context.user_data.pop(CTX_INDIVIDUAL, None)
+        # Limpia también cualquier lote pendiente para evitar doble-registro
+        context.user_data.pop(CTX_PENDIENTES, None)
         if not t:
             await query.edit_message_text("⚠️ No hay transacción pendiente.")
             return
@@ -667,17 +675,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.edit_message_text(respuesta)
         except RuntimeError:
             await query.edit_message_text(error_notion())
-
-        # Si hay más en la cola (venía de "Revisar")
-        cola = context.user_data.get(CTX_PENDIENTES, [])
-        if cola:
-            siguiente = cola[0]
-            context.user_data[CTX_INDIVIDUAL] = siguiente
-            context.user_data[CTX_PENDIENTES] = cola[1:]
-            await query.message.reply_text(
-                confirmar_individual(siguiente),
-                reply_markup=_teclado_confirmacion_individual(),
-            )
 
     elif data == "ind_cancelar":
         context.user_data.pop(CTX_INDIVIDUAL, None)
