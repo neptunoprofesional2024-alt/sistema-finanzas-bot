@@ -414,7 +414,11 @@ def resumen_financiero_mensaje(data: dict) -> str:
 def categoria_analisis_mensaje(categoria: str, filas: list[dict], transacciones: list[dict],
                                modo_falta: bool = False) -> str:
     if not filas:
-        return f"📊 No encontré la categoría *{categoria}* en tus proyecciones."
+        return (
+            f"📊 *{categoria}*\n"
+            f"Esta categoría no tiene presupuesto proyectado para este mes.\n"
+            f"Los gastos se registran en el detalle pero no afectan ninguna proyección."
+        )
 
     fila = filas[0]
     real = fila["real"]

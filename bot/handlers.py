@@ -4,7 +4,7 @@ import os
 import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from ai.extractor import extract_from_text, extract_from_image
+from ai.extractor import extract_from_text, extract_from_image, detectar_intencion
 from notion.expenses import create_expense_entry
 from notion.income import create_income_entry
 from notion.queries import get_analisis_completo, get_transacciones_categoria
@@ -115,6 +115,29 @@ def _normalizar_nombre(s: str) -> str:
     return _WS_RE.sub(" ", s).strip().lower()
 
 
+_NUMERO_RE = re.compile(r"\d+")
+
+
+_REGISTRO_VERBOS = [
+    "gasté", "gaste", "pagué", "pague", "compré", "compre",
+    "cobré", "cobre", "invertí", "inverti", "me costó", "me costo",
+    "me cobró", "me cobro", "recibí", "recibi",
+]
+
+
+def _es_registro_ahorro(texto_lower: str) -> bool:
+    """True cuando el mensaje describe ahorros con montos, no una consulta."""
+    tiene_numero = bool(_NUMERO_RE.search(texto_lower))
+    palabras_registro = ["ahorré", "ahorrando", "quiero ahorrar", "voy a ahorrar"]
+    empieza_ahorro = texto_lower.strip().startswith("ahorro")
+    return (empieza_ahorro and tiene_numero) or any(kw in texto_lower for kw in palabras_registro)
+
+
+def _es_registro_gasto(texto_lower: str) -> bool:
+    """True cuando el texto parece registro de transacción (verbo acción + monto), no consulta."""
+    return bool(_NUMERO_RE.search(texto_lower)) and any(v in texto_lower for v in _REGISTRO_VERBOS)
+
+
 # Palabras que indican "¿cuánto falta/me queda?" en vez de "¿cuánto llevo?"
 _FALTA_KEYWORDS = [
     "cuánto falta", "cuanto falta", "me falta", "cuánto me falta", "cuanto me falta",
@@ -161,15 +184,15 @@ _CATEGORIA_KEYWORDS: list[tuple[list[str], str, str]] = [
     (["pago coral", "coral"],
      "Pago al Coral", "créditos y responsabilidades"),
     (["entretenimiento", "ocio", "diversión", "diversion", "salidas y ocio", "salidas"],
-     "Entretenimiento", "Salidas y Ocio"),
+     "Gastos de Entretenimiento\xa0", "Salidas y Ocio"),
     (["netflix", "suscripción", "suscripcion", "spotify", "suscripciones"],
      "Suscripciones", "Suscripciones ( Netflix etc.)"),
     (["gastos médicos", "médico", "medico", "salud", "farmacia", "medicina"],
-     "Gastos médicos", "Gastos médicos"),
+     "Salud + suplementos y vitaminas", "Gastos médicos"),
     (["higiene personal", "aseo personal", "cuidado personal", "shampoo", "jabón", "jabon", "higiene"],
      "Higiene Personal.", "Higiene Personal"),
     (["gym", "gimnasio"],
-     "GYM mensual", "GYM mensual"),
+     "Gimnasio\xa0o GYM ", "GYM mensual"),
     (["ropa nueva", "ropa", "zapatos", "calzado", "tienda"],
      "Compras ocasionales", "Compras ocasionales ( ropa )"),
     (["mantenimiento", "reparación", "reparacion", "herramientas"],
@@ -191,6 +214,13 @@ _CATEGORIA_KEYWORDS: list[tuple[list[str], str, str]] = [
 ]
 
 
+# Reverse-lookup: cat_notion → nombre_proy  (para el fallback de intención IA)
+_CAT_NOTION_TO_PROY: dict[str, str] = {
+    cat_notion: nombre_proy
+    for _, nombre_proy, cat_notion in _CATEGORIA_KEYWORDS
+}
+
+
 def _detectar_categoria(texto_lower: str) -> tuple[str, str] | None:
     """Primera entrada cuya keyword sea substring del texto. Más específico → primero en la lista."""
     for keywords, nombre_proy, cat_notion in _CATEGORIA_KEYWORDS:
@@ -199,9 +229,69 @@ def _detectar_categoria(texto_lower: str) -> tuple[str, str] | None:
     return None
 
 
+_COMPLETAR_PAGO_KEYWORDS = [
+    "ya pagué", "ya pague", "ya está pagado", "ya esta pagado",
+    "ya lo pagué", "ya lo pague", "ya completé", "ya complete",
+    "este pago ya se completó", "este pago ya se completo",
+    "ya completé este pago", "ya complete este pago",
+    "sácalo de prioridades", "sacalo de prioridades",
+    "quitar de prioridades", "ya no hay que pagar",
+    "marcar como pagado", "márcar como pagado",
+]
+
+# keywords en texto → nombre de concepto en _CONCEPTO_CONFIG
+_COMPLETAR_CONCEPTO_MAP: list[tuple[list[str], str]] = [
+    (["coral"],                                           "Pago Coral"),
+    (["pichincha"],                                       "Tarjeta Pichincha"),
+    (["pacífico", "pacifico", "laptop"],                  "Tarjeta Pacífico (Laptop)"),
+    (["alquiler", "arriendo"],                            "Alquiler"),
+    (["alimentación", "alimentacion", "mercado", "supermercado"], "Alimentación hogar"),
+    (["celular", "recarga", "plan celular"],              "Recarga/plan"),
+    (["higiene"],                                         "Higiene"),
+    (["salud", "suplementos", "vitaminas"],               "Salud + suplementos"),
+    (["viático", "viatico", "reunión", "reunion"],        "Viáticos/reuniones"),
+    (["proteína", "proteina", "entrenamiento"],           "Proteínas/entrenamiento"),
+    (["playa"],                                           "Viaje playa"),
+    (["deseos", "compras deseos"],                        "Compras/deseos"),
+    (["cursos", "libros"],                                "Cursos/libros"),
+    (["seminarios", "talleres"],                          "Seminarios/talleres"),
+    (["ahorro casa", "entrada casa"],                     "Ahorro casa"),
+]
+
+
+def _detectar_concepto_completar(texto_lower: str) -> str | None:
+    """Retorna el nombre del concepto si hay keyword match, None si no."""
+    for keywords, concepto in _COMPLETAR_CONCEPTO_MAP:
+        if any(kw in texto_lower for kw in keywords):
+            return concepto
+    return None
+
+
+async def _marcar_completado_y_responder(update: Update, concepto: str) -> None:
+    """Llama a marcar_prioridad_completada y envía la respuesta apropiada."""
+    try:
+        from notion.priorities import marcar_prioridad_completada
+        resultado = marcar_prioridad_completada(concepto)
+    except Exception as e:
+        logger.error(f"Error marcando prioridad completada: {e}")
+        await update.message.reply_text(error_notion())
+        return
+    if resultado:
+        await update.message.reply_text(
+            f"✅ *{resultado}* marcado como completado.\nYa no aparecerá en tus prioridades.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ No encontré ese pago en tus prioridades. "
+            "Prueba con: coral, pichincha, alquiler, playa..."
+        )
+
+
 # Claves de contexto para el flujo de confirmación
 CTX_PENDIENTES = "transacciones_pendientes"
 CTX_INDIVIDUAL = "transaccion_individual"
+CTX_COMPLETAR_PAGO = "completar_pago"
 
 
 def _teclado_confirmacion_lote() -> InlineKeyboardMarkup:
@@ -252,6 +342,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     texto = update.message.text.strip()
     texto_lower = texto.lower()
 
+    # ── Estado: esperando que el usuario diga qué pago completó ──
+    if context.user_data.get(CTX_COMPLETAR_PAGO):
+        context.user_data.pop(CTX_COMPLETAR_PAGO)
+        concepto = _detectar_concepto_completar(texto_lower)
+        if concepto:
+            await _marcar_completado_y_responder(update, concepto)
+        else:
+            await update.message.reply_text(
+                "🤔 No reconocí ese pago. Prueba con: coral, pichincha, alquiler, playa, proteínas..."
+            )
+        return
+
+    # ── Marcar pago como completado ──
+    if any(kw in texto_lower for kw in _COMPLETAR_PAGO_KEYWORDS):
+        concepto = _detectar_concepto_completar(texto_lower)
+        if concepto:
+            await _marcar_completado_y_responder(update, concepto)
+        else:
+            context.user_data[CTX_COMPLETAR_PAGO] = True
+            await update.message.reply_text(
+                "¿Cuál pago completaste? Dime el nombre:\n"
+                "(coral, pichincha, alquiler, playa, proteínas...)"
+            )
+        return
+
     # Natural language shortcut for priorities
     if any(kw in texto_lower for kw in _PRIORIDADES_KEYWORDS):
         from notion.priorities import get_top_prioridades, get_all_prioridades
@@ -280,7 +395,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(pagos_proximos_mensaje(alertas))
         return
 
-    # Analytics: gastos / ingresos / ahorros / resumen
+    # Analytics: categoría específica  ← va ANTES del análisis general para que
+    # "cómo van mis gastos médicos" no sea capturado por "cómo van mis gastos"
+    _es_registro = _es_registro_ahorro(texto_lower) or _es_registro_gasto(texto_lower)
+    categoria_detectada = None if _es_registro else _detectar_categoria(texto_lower)
+    if categoria_detectada:
+        try:
+            data = get_analisis_completo()
+            nombre_proy, cat_notion = categoria_detectada
+            filas = [f for f in data["gastos_filas"]
+                     if _normalizar_nombre(f["nombre"]) == _normalizar_nombre(nombre_proy)]
+            modo_falta = any(kw in texto_lower for kw in _FALTA_KEYWORDS)
+            transacciones = [] if modo_falta else get_transacciones_categoria(cat_notion)
+            await update.message.reply_text(
+                categoria_analisis_mensaje(cat_notion, filas, transacciones, modo_falta=modo_falta),
+                parse_mode="Markdown",
+            )
+        except RuntimeError:
+            await update.message.reply_text(error_notion())
+        return
+
+    # Analytics: gastos / ingresos / ahorros / resumen  (general — sin categoría específica)
     _analisis_routing = [
         (_GASTOS_ANALISIS_KEYWORDS,   gastos_analisis_mensaje),
         (_INGRESOS_ANALISIS_KEYWORDS, ingresos_analisis_mensaje),
@@ -297,23 +432,96 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 await update.message.reply_text(error_notion())
             return
 
-    # Analytics: categoría específica
-    categoria_detectada = _detectar_categoria(texto_lower)
-    if categoria_detectada:
+    # ── Fallback IA: detectar intención cuando ninguna keyword local matcheó ──
+    # Solo si el texto NO parece un registro directo de transacción.
+    if not _es_registro:
         try:
-            data = get_analisis_completo()
-            nombre_proy, cat_notion = categoria_detectada
-            filas = [f for f in data["gastos_filas"]
-                     if _normalizar_nombre(f["nombre"]) == _normalizar_nombre(nombre_proy)]
-            modo_falta = any(kw in texto_lower for kw in _FALTA_KEYWORDS)
-            transacciones = [] if modo_falta else get_transacciones_categoria(cat_notion)
-            await update.message.reply_text(
-                categoria_analisis_mensaje(cat_notion, filas, transacciones, modo_falta=modo_falta),
-                parse_mode="Markdown",
-            )
+            intencion_data = detectar_intencion(texto)
+        except Exception as e:
+            logger.warning(f"detectar_intencion falló: {e}")
+            intencion_data = {"intencion": "otro"}
+
+        intencion  = intencion_data.get("intencion", "otro")
+        filtros    = intencion_data.get("filtros") or []
+        cat_ia     = intencion_data.get("categoria_especifica")
+        presupuesto = intencion_data.get("presupuesto")
+
+        try:
+            if intencion == "consulta_ahorros":
+                await update.message.reply_text(
+                    ahorros_analisis_mensaje(get_analisis_completo()), parse_mode="Markdown"
+                )
+                return
+
+            elif intencion == "consulta_gastos":
+                await update.message.reply_text(
+                    gastos_analisis_mensaje(get_analisis_completo()), parse_mode="Markdown"
+                )
+                return
+
+            elif intencion == "consulta_ingresos":
+                await update.message.reply_text(
+                    ingresos_analisis_mensaje(get_analisis_completo()), parse_mode="Markdown"
+                )
+                return
+
+            elif intencion == "consulta_resumen":
+                await update.message.reply_text(
+                    resumen_financiero_mensaje(get_analisis_completo()), parse_mode="Markdown"
+                )
+                return
+
+            elif intencion == "consulta_prioridades":
+                from notion.priorities import get_all_prioridades
+                prioridades = get_all_prioridades()
+                if filtros:
+                    prioridades = [
+                        p for p in prioridades
+                        if not any(f.lower() in p.get("concepto", "").lower() for f in filtros)
+                    ]
+                if presupuesto is not None:
+                    prioridades = [p for p in prioridades if p.get("falta", 0) <= presupuesto]
+                await update.message.reply_text(
+                    prioridades_mensaje(prioridades[:10], todas=bool(filtros or presupuesto)),
+                    parse_mode="Markdown",
+                )
+                return
+
+            elif intencion == "consulta_pagos_proximos":
+                from bot.scheduler import check_pagos_proximos
+                alertas = check_pagos_proximos(dias=15)
+                await update.message.reply_text(pagos_proximos_mensaje(alertas))
+                return
+
+            elif intencion == "consulta_categoria" and cat_ia:
+                nombre_proy = _CAT_NOTION_TO_PROY.get(cat_ia, cat_ia)
+                data = get_analisis_completo()
+                filas = [f for f in data["gastos_filas"]
+                         if _normalizar_nombre(f["nombre"]) == _normalizar_nombre(nombre_proy)]
+                modo_falta = any(kw in texto_lower for kw in _FALTA_KEYWORDS)
+                transacciones = [] if modo_falta else get_transacciones_categoria(cat_ia)
+                await update.message.reply_text(
+                    categoria_analisis_mensaje(cat_ia, filas, transacciones, modo_falta=modo_falta),
+                    parse_mode="Markdown",
+                )
+                return
+
+            elif intencion == "marcar_pagado":
+                concepto = _detectar_concepto_completar(texto_lower)
+                if concepto:
+                    await _marcar_completado_y_responder(update, concepto)
+                else:
+                    context.user_data[CTX_COMPLETAR_PAGO] = True
+                    await update.message.reply_text(
+                        "¿Cuál pago completaste? Dime el nombre:\n"
+                        "(coral, pichincha, alquiler, playa...)"
+                    )
+                return
+
+            # intencion == "registro_transaccion" o "otro" → cae al extractor
         except RuntimeError:
             await update.message.reply_text(error_notion())
-        return
+            return
 
     await update.message.reply_text("🤖 Procesando...")
 

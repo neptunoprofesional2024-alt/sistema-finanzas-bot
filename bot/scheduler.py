@@ -65,6 +65,15 @@ def _proxima_fecha_pago(dia: int) -> date:
     return fecha
 
 
+def _limpiar_nulos(obj):
+    """Elimina recursivamente claves con valor None (la API Notion las rechaza)."""
+    if isinstance(obj, dict):
+        return {k: _limpiar_nulos(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_limpiar_nulos(i) for i in obj]
+    return obj
+
+
 def _leer_bloques(client, block_id: str, depth: int = 0) -> list[dict]:
     """Lee bloques de una página Notion para duplicar (máx profundidad 2)."""
     if depth > 2:
@@ -84,7 +93,7 @@ def _leer_bloques(client, block_id: str, depth: int = 0) -> list[dict]:
             tipo = b.get("type", "")
             if tipo in _SKIP_BLOCK_TYPES:
                 continue
-            contenido = dict(b.get(tipo, {}))
+            contenido = _limpiar_nulos(dict(b.get(tipo, {})))
             bloque: dict = {"type": tipo, tipo: contenido}
             if b.get("has_children") and depth < 2:
                 hijos = _leer_bloques(client, b["id"], depth + 1)
@@ -141,6 +150,48 @@ async def send_reporte_mensual(bot, chat_id: int) -> None:
 
 
 # ── Tarea: crear página del mes nuevo ────────────────────────────────────────
+
+async def _pagina_mes_existe(client, mes_nombre: str, año: int) -> bool:
+    """Verifica si ya existe una página del mes actual bajo el parent de presupuesto."""
+    busqueda = f"{mes_nombre} {año}"
+    cursor = None
+    while True:
+        params = {"block_id": _PARENT_BUDGET_ID, "page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        try:
+            resp = client.blocks.children.list(**params)
+        except Exception:
+            return False
+        for b in resp.get("results", []):
+            if b.get("type") == "child_page":
+                titulo = b.get("child_page", {}).get("title", "")
+                if busqueda in titulo:
+                    return True
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+    return False
+
+
+async def catchup_mes_nuevo() -> None:
+    """
+    Catch-up al arranque: si es día 1 y la página del mes no existe todavía,
+    la crea. Evita que un reinicio del proceso en Railway pierda el trigger.
+    """
+    hoy = date.today()
+    if hoy.day != 1:
+        return
+    from notion_client import Client
+    from config.settings import NOTION_TOKEN
+    client = Client(auth=NOTION_TOKEN)
+    mes_nombre = _MESES_ES_MAYUS[hoy.month]
+    if await _pagina_mes_existe(client, mes_nombre, hoy.year):
+        logger.info(f"Catch-up: página de {mes_nombre} {hoy.year} ya existe, nada que hacer.")
+        return
+    logger.info(f"Catch-up: día 1 y no existe página de {mes_nombre} {hoy.year} — creando…")
+    await crear_mes_nuevo()
+
 
 async def crear_mes_nuevo() -> None:
     """

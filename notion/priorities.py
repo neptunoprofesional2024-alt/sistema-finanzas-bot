@@ -283,6 +283,50 @@ def update_tabla_prioridades() -> None:
             pass
 
 
+def marcar_prioridad_completada(concepto: str) -> str | None:
+    """
+    Marca un concepto como pagado estableciendo $ Real = $ Proyección en PROYECCIONES_GASTOS.
+    Con falta = 0 el concepto queda excluido de calcular_prioridades().
+    Retorna el nombre del concepto si se actualizó, None si no se encontró.
+    """
+    cfg = _CONCEPTO_CONFIG.get(concepto)
+    if not cfg:
+        return None
+
+    from config.settings import NOTION_PROYECCIONES_GASTOS_DB_ID
+
+    proyecciones = _get_proyecciones_data()
+    fila_simple = cfg.get("proyeccion_fila")
+    filas = [fila_simple] if fila_simple else cfg.get("proyeccion_filas", [])
+    actualizado = False
+
+    for fila_nombre in filas:
+        if not fila_nombre:
+            continue
+        datos = proyecciones.get(fila_nombre, {})
+        proy = datos.get("proyectado") or float(cfg["monto_fijo"])
+
+        # Buscar la página en Notion: primero exacto, luego contains por palabras largas
+        pages = safe_query(
+            NOTION_PROYECCIONES_GASTOS_DB_ID,
+            filter={"property": "Egreso determinado ", "title": {"equals": fila_nombre}},
+        )
+        if not pages:
+            for word in (w for w in fila_nombre.split() if len(w) >= 4):
+                pages = safe_query(
+                    NOTION_PROYECCIONES_GASTOS_DB_ID,
+                    filter={"property": "Egreso determinado ", "title": {"contains": word}},
+                )
+                if pages:
+                    break
+
+        if pages:
+            update_page(pages[0]["id"], {"$ Real ": {"number": proy}})
+            actualizado = True
+
+    return concepto if actualizado else None
+
+
 def get_all_prioridades() -> list[dict]:
     return calcular_prioridades()
 

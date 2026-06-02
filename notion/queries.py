@@ -160,7 +160,7 @@ _GASTO_PROYECCION_MAP: dict = {
     "GYM mensual":                    "Gimnasio\xa0o GYM ",
     "Higiene Personal":               "Higiene\xa0Personal. ",
     # Ocio / entretenimiento
-    "Salidas y Ocio":                 "Entretenimiento\xa0",
+    "Salidas y Ocio":                 "Gastos de Entretenimiento\xa0",
     # Trabajo
     "Viático":                        "Viaticos y Reuniones",
     # Salud
@@ -183,7 +183,8 @@ _AHORRO_PROYECCION_MAP: list = [
     (["proteína", "proteina", "entrenamiento"],  "AHOOROS PARA PROTEÍNAS Y ENTRENAMIENTO: "),
     (["playa", "amigos"],                         "VIAJE A LA PLAYA CON AMIGOS "),
     (["casa", "entrada"],                          "AHORRO PARA ENTRADA DE CASA: "),
-    (["deseos", "compras deseos"],                "COMPRAS O DESEOS "),
+    (["deseos", "compras"],                        "COMPRAS O DESEOS "),
+    (["colchón", "colchon", "financiero"],         "COLCHÓN FINANCIERO"),
 ]
 
 # Palabras clave en descripción → fila de deuda específica

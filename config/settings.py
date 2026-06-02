@@ -251,12 +251,26 @@ REGLAS ESPECIALES (tienen PRIORIDAD absoluta sobre las reglas anteriores):
   → categoria_notion="Ahorros", tipo=gasto, descripcion="ahorro viaje playa amigos"
 - "proteína" / "proteinas" / "ahorro proteína" / "ahorro entrenamiento"
   → categoria_notion="Ahorros", tipo=gasto, descripcion="ahorro proteínas entrenamiento"
+- "compras y deseos" / "compras o deseos" / "ahorro deseos" / "ahorro compras" / "para compras y deseos" / "para compras o deseos"
+  → categoria_notion="Ahorros", tipo=gasto, descripcion="ahorro compras y deseos"
+- "colchón financiero" / "colchon financiero" / "ahorro colchón" / "ahorro colchon" / "fondo de emergencia"
+  → categoria_notion="Ahorros", tipo=gasto, descripcion="ahorro colchón financiero"
+
+REGLAS DE FECHA (PRIORIDAD ABSOLUTA):
+- La fecha de hoy es {fecha_hoy}
+- Si el usuario menciona una fecha, usa ESA fecha — NUNCA uses {fecha_hoy} en ese caso
+- "ayer" → un día antes de {fecha_hoy}
+- "anteayer" / "antes de ayer" → dos días antes de {fecha_hoy}
+- "el [N] de [mes]" / "[N] de [mes]" / "[N] [mes]" → ese día del año actual (ej: "el 15 de mayo" → {anio_hoy}-05-15)
+- "el [N]" / "el día [N]" → día N del mes de {fecha_hoy}
+- "el lunes/martes/miércoles/jueves/viernes/sábado/domingo" → el día más reciente de esa semana
+- Si NO hay fecha explícita → usa {fecha_hoy}
 
 INSTRUCCIONES:
 1. Extrae TODAS las transacciones visibles (puede ser una lista de Monefy o texto libre).
 2. Para cada transacción determina si es gasto o ingreso.
 3. Asigna la categoría_notion usando EXACTAMENTE uno de los valores de las listas de arriba.
-4. La fecha de hoy es {fecha_hoy}. Si no hay fecha explícita, usa hoy.
+4. Aplica las REGLAS DE FECHA de arriba para cada transacción.
 5. Confianza "alta" = categoría obvia. "media" = dudoso. "baja" = muy ambiguo.
 
 Devuelve ÚNICAMENTE este JSON (sin markdown, sin texto extra):
