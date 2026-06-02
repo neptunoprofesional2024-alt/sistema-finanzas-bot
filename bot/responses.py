@@ -195,9 +195,14 @@ def prioridades_mensaje(prioridades: list[dict], todas: bool = False) -> str:
     from datetime import date
     hoy = date.today()
     dia_str = f"{hoy.day} {_MESES_CORTOS[hoy.month]}"
+
+    # Separar urgentes de tarjetas informativas
+    urgentes = [p for p in prioridades if p.get("es_urgente", True)]
+    tarjetas_info = [p for p in prioridades if p.get("es_tarjeta_credito") and not p.get("es_urgente")]
+
     bloques = [f"🎯 *Tus prioridades ahora mismo — {dia_str}*"]
 
-    for p in prioridades:
+    for p in urgentes:
         falta = p["falta"]
         real = p.get("real", 0.0)
         proyectado = p.get("proyectado", 0.0)
@@ -205,7 +210,6 @@ def prioridades_mensaje(prioridades: list[dict], todas: bool = False) -> str:
         dias = p.get("dias", 30)
         venc_fecha = p.get("vencimiento_fecha")
 
-        # Línea de monto
         if dia_venc is not None and real > 0:
             monto_str = f"{_fmt_monto(falta)} restante"
         elif dia_venc is not None:
@@ -215,7 +219,6 @@ def prioridades_mensaje(prioridades: list[dict], todas: bool = False) -> str:
 
         header = f"{p['urgencia']} *#{p['numero']} — {p['concepto']}* ({monto_str})"
 
-        # Línea de vencimiento / progreso
         if dia_venc is not None:
             mes_nombre = _MESES_CORTOS[venc_fecha.month] if venc_fecha else ""
             if dias == 0:
@@ -228,6 +231,21 @@ def prioridades_mensaje(prioridades: list[dict], todas: bool = False) -> str:
             detalle = f"   Mes en curso — llevas {_fmt_monto(real)}/{_fmt_monto(proyectado)}"
 
         bloques.append(f"{header}\n{detalle}")
+
+    # Sección informativa de tarjetas (se pagan el mes siguiente)
+    if tarjetas_info:
+        mes_sig_idx = (hoy.month % 12) + 1
+        mes_sig_nombre = _MESES_CORTOS[mes_sig_idx]
+        lineas_tarjetas = ["💳 *Tarjetas de crédito (pago mes siguiente):*"]
+        for t in tarjetas_info:
+            venc_fecha = t.get("vencimiento_fecha")
+            dia_v = t.get("dia_vencimiento", "?")
+            mes_v = _MESES_CORTOS[venc_fecha.month] if venc_fecha else mes_sig_nombre
+            lineas_tarjetas.append(
+                f"   • {t['concepto']}: {_fmt_monto(t['falta'])} acumulado este mes"
+                f" _(vence día {dia_v} {mes_v})_"
+            )
+        bloques.append("\n".join(lineas_tarjetas))
 
     if not todas:
         bloques.append("_Escribe /prioridades todas para ver la lista completa._")

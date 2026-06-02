@@ -75,18 +75,28 @@ def _proxima_fecha_pago(dia: int) -> date:
 # ── Tarea: alertas diarias ────────────────────────────────────────────────────
 
 def check_pagos_proximos(dias: int = 3) -> list[dict]:
+    """
+    Devuelve los pagos que vencen dentro de `dias` días.
+    Las tarjetas de crédito solo aparecen si su fecha de vencimiento
+    está en el mes siguiente al actual (son deudas del gasto del mes en curso).
+    """
     hoy = date.today()
+    mes_siguiente = (hoy.month % 12) + 1
     alertas = []
     for concepto, info in PAGOS_FIJOS.items():
         fecha_pago = _proxima_fecha_pago(info["dia"])
         delta = (fecha_pago - hoy).days
-        if 0 <= delta <= dias:
-            alertas.append({
-                "concepto": info["descripcion"],
-                "monto": info["monto"],
-                "fecha": fecha_pago,
-                "dias": delta,
-            })
+        if not (0 <= delta <= dias):
+            continue
+        # Tarjetas de crédito: solo alertar cuando el vencimiento cae en el mes siguiente
+        if info.get("es_tarjeta_credito") and fecha_pago.month != mes_siguiente:
+            continue
+        alertas.append({
+            "concepto": info["descripcion"],
+            "monto": info["monto"],
+            "fecha": fecha_pago,
+            "dias": delta,
+        })
     return sorted(alertas, key=lambda a: a["dias"])
 
 

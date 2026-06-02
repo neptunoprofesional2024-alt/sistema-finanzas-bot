@@ -24,11 +24,13 @@ PAGOS_FIJOS = {
         "dia": 5,
         "monto": 205,
         "descripcion": "Tarjeta Pacífico - máximo día 5",
+        "es_tarjeta_credito": True,
     },
     "Tarjeta de crédito Pichincha.": {
         "dia": 12,
         "monto": 95,
         "descripcion": "Tarjeta Pichincha",
+        "es_tarjeta_credito": True,
     },
     "Pago al Coral": {
         "dia": 1,

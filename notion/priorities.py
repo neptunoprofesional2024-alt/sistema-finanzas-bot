@@ -20,12 +20,14 @@ _CONCEPTO_CONFIG: dict = {
         "tipo": "deuda",
         "proyeccion_fila": "Tarjeta de crédito Pacifico (Laptop)",
         "monto_fijo": 205,
+        "es_tarjeta_credito": True,
     },
     "Tarjeta Pichincha": {
         "dia_vencimiento": 12,
         "tipo": "deuda",
         "proyeccion_fila": "Tarjeta de crédito Pichincha.",
         "monto_fijo": 95,
+        "es_tarjeta_credito": True,
     },
     "Pago Coral": {
         "dia_vencimiento": 1,
@@ -161,6 +163,30 @@ def _proxima_fecha_vencimiento(dia_mes: int, hoy: date) -> date:
     return venc
 
 
+# ── Gasto acumulado en tarjetas (mes actual) ─────────────────────────────────
+
+def _get_gasto_tarjetas() -> float:
+    """
+    Suma todos los gastos de categoría 'créditos y responsabilidades' del mes actual.
+    Representa lo acumulado en tarjetas que habrá que pagar el mes siguiente.
+    """
+    from config.settings import NOTION_GASTOS_DB_ID
+    from datetime import date
+    hoy = date.today()
+    start = f"{hoy.year}-{hoy.month:02d}-01"
+    end = (f"{hoy.year + 1}-01-01" if hoy.month == 12
+           else f"{hoy.year}-{hoy.month + 1:02d}-01")
+    filtro = {
+        "and": [
+            {"property": "Detalle del gasto. ", "select": {"equals": "créditos y responsabilidades"}},
+            {"property": "Fecha", "date": {"on_or_after": start}},
+            {"property": "Fecha", "date": {"before": end}},
+        ]
+    }
+    pages = safe_query(NOTION_GASTOS_DB_ID, filter=filtro)
+    return sum((p["properties"].get("Cantidad ", {}).get("number") or 0) for p in pages)
+
+
 # ── Datos de proyecciones ────────────────────────────────────────────────────
 
 def _get_proyecciones_data() -> dict:
@@ -204,14 +230,70 @@ def _calcular_falta_concepto(concepto: str, cfg: dict, proyecciones: dict) -> tu
 def calcular_prioridades() -> list[dict]:
     """
     Calcula dinámicamente el ranking de prioridades financieras.
-    Fuente de datos: proyecciones de egresos + PAGOS_FIJOS.
-    Excluye conceptos con falta <= 0 (ya cubiertos).
+
+    Tarjetas de crédito (es_tarjeta_credito=True):
+    - Durante el mes de gasto: score bajo (informativo), vencimiento real = mes siguiente
+    - Durante el mes de vencimiento (mes siguiente) con <= 7 días: score alto (urgente)
+
+    El monto de tarjetas = gasto acumulado real en 'créditos y responsabilidades' del mes.
     """
     hoy = date.today()
+    mes_siguiente = (hoy.month % 12) + 1
     proyecciones = _get_proyecciones_data()
+    gasto_tarjetas = _get_gasto_tarjetas()
 
     items = []
     for concepto, cfg in _CONCEPTO_CONFIG.items():
+        es_tarjeta = cfg.get("es_tarjeta_credito", False)
+
+        # ── Tarjetas de crédito ─────────────────────────────────────────────
+        if es_tarjeta:
+            # Usar el gasto acumulado real del mes; si es 0, usar monto_fijo
+            monto = gasto_tarjetas if gasto_tarjetas > 0 else float(cfg["monto_fijo"])
+            dia_venc = cfg["dia_vencimiento"]
+
+            # Fecha de vencimiento: siempre en el MES SIGUIENTE
+            try:
+                if hoy.month == 12:
+                    venc_fecha = date(hoy.year + 1, 1, dia_venc)
+                else:
+                    venc_fecha = date(hoy.year, mes_siguiente, dia_venc)
+            except ValueError:
+                venc_fecha = None
+
+            dias = (venc_fecha - hoy).days if venc_fecha else 30
+
+            # En el mes de vencimiento con <= 7 días → urgente
+            # En el mes de gasto (ahora) → informativo (score muy bajo)
+            if venc_fecha and venc_fecha.month == hoy.month and dias <= 7:
+                # Estamos en el mes de vencimiento: urgente
+                pf = _peso_fecha(dias)
+                pm = _peso_monto(monto)
+                pt = _peso_tipo(cfg["tipo"])
+                score = round(pf * 0.5 + pm * 0.3 + pt * 0.2, 3)
+                es_urgente = True
+            else:
+                # Estamos en el mes de gasto: score informativo bajo
+                score = 1.0
+                es_urgente = False
+
+            items.append({
+                "concepto": concepto,
+                "falta": round(monto, 2),
+                "real": 0.0,
+                "proyectado": round(monto, 2),
+                "dias": dias,
+                "dia_vencimiento": dia_venc,
+                "vencimiento_fecha": venc_fecha,
+                "tipo": cfg["tipo"],
+                "score": score,
+                "urgencia": _emoji_score(score) if es_urgente else "💳",
+                "es_tarjeta_credito": True,
+                "es_urgente": es_urgente,
+            })
+            continue
+
+        # ── Pagos normales ──────────────────────────────────────────────────
         falta, real, proyectado = _calcular_falta_concepto(concepto, cfg, proyecciones)
         if falta <= 0:
             continue
@@ -240,6 +322,8 @@ def calcular_prioridades() -> list[dict]:
             "tipo": cfg["tipo"],
             "score": score,
             "urgencia": _emoji_score(score),
+            "es_tarjeta_credito": False,
+            "es_urgente": True,
         })
 
     items.sort(key=lambda x: x["score"], reverse=True)
