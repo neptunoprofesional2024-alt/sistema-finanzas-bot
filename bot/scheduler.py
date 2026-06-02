@@ -13,26 +13,33 @@ logger = logging.getLogger(__name__)
 
 CHAT_ID_FILE = os.path.join(os.path.dirname(__file__), "..", ".chat_id")
 
-_TEMPLATE_ID = "366ad4e6-2362-8070-84a7-f974ad50597f"
-_PARENT_BUDGET_ID = "44ca7f3e-c806-4a86-a3a4-9a57d45c641d"
-
 _MESES_ES_MAYUS = {
     1: "ENERO", 2: "FEBRERO", 3: "MARZO", 4: "ABRIL",
     5: "MAYO", 6: "JUNIO", 7: "JULIO", 8: "AGOSTO",
     9: "SEPTIEMBRE", 10: "OCTUBRE", 11: "NOVIEMBRE", 12: "DICIEMBRE",
 }
-_FRASES_MES = [
-    "Mes de éxito y abundancia",
-    "Mes de más ganancias y crecimiento",
-    "Mes de expansión financiera",
-    "Mes de logros extraordinarios",
+
+# Montos "Falta" iniciales por concepto al arrancar el mes nuevo.
+# Coinciden con el $ Proyección de cada fila en la tabla de prioridades.
+_PRIORIDADES_FALTA_INICIAL: list[tuple[str, float]] = [
+    ("Tarjeta Pacífico (Laptop)", 205),
+    ("Pago Coral",                130),
+    ("Alimentación hogar",        212),
+    ("Recarga/plan",               20),
+    ("Higiene",                    72),
+    ("Salud + suplementos",       131),
+    ("Transporte total restante", 110),
+    ("Viáticos/reuniones",         48),
+    ("Cursos/libros",              20),
+    ("Seminarios/talleres",        50),
+    ("Compras/deseos",            400),
+    ("Viaje playa",               400),
+    ("Proteínas/entrenamiento",   400),
+    ("Ahorro casa",               800),
 ]
 
-# Tipos de bloque que no se pueden copiar via API
-_SKIP_BLOCK_TYPES = {"child_database", "unsupported", "template"}
 
-
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_chat_id() -> int | None:
     try:
@@ -63,47 +70,6 @@ def _proxima_fecha_pago(dia: int) -> date:
         ultimo_dia_sig = calendar.monthrange(año, mes)[1]
         fecha = date(año, mes, min(dia, ultimo_dia_sig))
     return fecha
-
-
-def _limpiar_nulos(obj):
-    """Elimina recursivamente claves con valor None (la API Notion las rechaza)."""
-    if isinstance(obj, dict):
-        return {k: _limpiar_nulos(v) for k, v in obj.items() if v is not None}
-    if isinstance(obj, list):
-        return [_limpiar_nulos(i) for i in obj]
-    return obj
-
-
-def _leer_bloques(client, block_id: str, depth: int = 0) -> list[dict]:
-    """Lee bloques de una página Notion para duplicar (máx profundidad 2)."""
-    if depth > 2:
-        return []
-    bloques = []
-    cursor = None
-    while True:
-        params = {"block_id": block_id, "page_size": 100}
-        if cursor:
-            params["start_cursor"] = cursor
-        try:
-            resp = client.blocks.children.list(**params)
-        except Exception as e:
-            logger.warning(f"No se pudo leer bloques de {block_id}: {e}")
-            break
-        for b in resp.get("results", []):
-            tipo = b.get("type", "")
-            if tipo in _SKIP_BLOCK_TYPES:
-                continue
-            contenido = _limpiar_nulos(dict(b.get(tipo, {})))
-            bloque: dict = {"type": tipo, tipo: contenido}
-            if b.get("has_children") and depth < 2:
-                hijos = _leer_bloques(client, b["id"], depth + 1)
-                if hijos:
-                    bloque["children"] = hijos
-            bloques.append(bloque)
-        if not resp.get("has_more"):
-            break
-        cursor = resp.get("next_cursor")
-    return bloques
 
 
 # ── Tarea: alertas diarias ────────────────────────────────────────────────────
@@ -137,7 +103,7 @@ async def send_alertas_diarias(bot, chat_id: int) -> None:
 # ── Tarea: reporte mensual ────────────────────────────────────────────────────
 
 async def send_reporte_mensual(bot, chat_id: int) -> None:
-    """Envía resumen del mes anterior el día 1 a las 8:00 AM."""
+    """Envía resumen del mes que acaba de terminar (día 1, 08:00 AM)."""
     from notion.queries import get_resumen_mes_anterior
     from bot.responses import reporte_mensual_mensaje
     try:
@@ -149,83 +115,148 @@ async def send_reporte_mensual(bot, chat_id: int) -> None:
         logger.error(f"Error enviando reporte mensual: {e}")
 
 
-# ── Tarea: crear página del mes nuevo ────────────────────────────────────────
+# ── Tarea: reset mensual de la página maestra ────────────────────────────────
 
-async def _pagina_mes_existe(client, mes_nombre: str, año: int) -> bool:
-    """Verifica si ya existe una página del mes actual bajo el parent de presupuesto."""
-    busqueda = f"{mes_nombre} {año}"
+def _archivar_registros(client, db_id: str) -> int:
+    """Archiva todos los registros activos de una base de datos. Retorna el total."""
     cursor = None
+    total = 0
     while True:
-        params = {"block_id": _PARENT_BUDGET_ID, "page_size": 100}
+        params = {"database_id": db_id, "page_size": 100}
         if cursor:
             params["start_cursor"] = cursor
-        try:
-            resp = client.blocks.children.list(**params)
-        except Exception:
-            return False
-        for b in resp.get("results", []):
-            if b.get("type") == "child_page":
-                titulo = b.get("child_page", {}).get("title", "")
-                if busqueda in titulo:
-                    return True
+        resp = client.databases.query(**params)
+        for p in resp.get("results", []):
+            if p.get("archived"):
+                continue
+            try:
+                client.pages.update(p["id"], archived=True)
+                total += 1
+            except Exception:
+                pass
         if not resp.get("has_more"):
             break
         cursor = resp.get("next_cursor")
-    return False
+    return total
 
 
-async def catchup_mes_nuevo() -> None:
+def _resetear_filas(client, db_id: str, props: dict) -> int:
+    """Actualiza todas las filas activas de una DB con las props dadas. Retorna el total."""
+    cursor = None
+    total = 0
+    while True:
+        params = {"database_id": db_id, "page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        resp = client.databases.query(**params)
+        for p in resp.get("results", []):
+            if p.get("archived"):
+                continue
+            try:
+                client.pages.update(p["id"], properties=props)
+                total += 1
+            except Exception as e:
+                logger.warning(f"Error reseteando fila {p['id'][:8]}: {e}")
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+    return total
+
+
+def _restaurar_prioridades(client, db_id: str) -> int:
+    """Restaura el campo Falta en la tabla de prioridades usando _PRIORIDADES_FALTA_INICIAL."""
+    cursor = None
+    total = 0
+    while True:
+        params = {"database_id": db_id, "page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        resp = client.databases.query(**params)
+        for p in resp.get("results", []):
+            if p.get("archived"):
+                continue
+            pr = p.get("properties", {})
+            concepto = "".join(
+                t.get("plain_text", "") for t in pr.get("Concepto", {}).get("rich_text", [])
+            ).lower()
+            falta = next(
+                (monto for kw, monto in _PRIORIDADES_FALTA_INICIAL
+                 if kw.lower() in concepto),
+                None,
+            )
+            if falta is not None:
+                try:
+                    client.pages.update(p["id"], properties={"Falta": {"number": falta}})
+                    total += 1
+                except Exception as e:
+                    logger.warning(f"Error restaurando prioridad {concepto!r}: {e}")
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+    return total
+
+
+async def reset_mes_nuevo(bot=None) -> bool:
     """
-    Catch-up al arranque: si es día 1 y la página del mes no existe todavía,
-    la crea. Evita que un reinicio del proceso en Railway pierda el trigger.
+    Resetea la página maestra para el mes nuevo:
+      1. Archiva todos los registros de gastos e ingresos detallados
+      2. Resetea $ Real y Etiquetas en proyecciones de egresos
+      3. Resetea Ganancias Reales en proyecciones de ingresos
+      4. Resetea AHORRADO y Selección en ahorros
+      5. Restaura Falta en prioridades a los montos proyectados
+      6. Notifica por Telegram
     """
-    hoy = date.today()
-    if hoy.day != 1:
-        return
     from notion_client import Client
-    from config.settings import NOTION_TOKEN
-    client = Client(auth=NOTION_TOKEN)
-    mes_nombre = _MESES_ES_MAYUS[hoy.month]
-    if await _pagina_mes_existe(client, mes_nombre, hoy.year):
-        logger.info(f"Catch-up: página de {mes_nombre} {hoy.year} ya existe, nada que hacer.")
-        return
-    logger.info(f"Catch-up: día 1 y no existe página de {mes_nombre} {hoy.year} — creando…")
-    await crear_mes_nuevo()
-
-
-async def crear_mes_nuevo() -> None:
-    """
-    Crea una nueva página mensual en Notion copiando la plantilla.
-    Se ejecuta el día 1 a las 00:01 AM.
-    """
-    from notion_client import Client
-    from config.settings import NOTION_TOKEN
+    from config.settings import (
+        NOTION_TOKEN,
+        NOTION_GASTOS_DB_ID, NOTION_INGRESOS_DB_ID,
+        NOTION_PROYECCIONES_GASTOS_DB_ID, NOTION_PROYECCIONES_INGRESOS_DB_ID,
+        NOTION_AHORROS_DB_ID, NOTION_PRIORIDADES_DB_ID,
+    )
 
     client = Client(auth=NOTION_TOKEN)
     hoy = date.today()
-
-    mes_nombre = _MESES_ES_MAYUS[hoy.month]
-    frase = _FRASES_MES[(hoy.month - 1) % len(_FRASES_MES)]
-    titulo = f"FINANZAS DE {mes_nombre} {hoy.year} || {frase}"
+    mes = _MESES_ES_MAYUS[hoy.month]
+    logger.info(f"Iniciando reset mensual para {mes} {hoy.year}…")
 
     try:
-        bloques = _leer_bloques(client, _TEMPLATE_ID)
-        logger.info(f"Plantilla leída: {len(bloques)} bloques.")
+        g = _archivar_registros(client, NOTION_GASTOS_DB_ID)
+        i = _archivar_registros(client, NOTION_INGRESOS_DB_ID)
+        logger.info(f"Archivados: {g} gastos, {i} ingresos")
 
-        nueva = client.pages.create(
-            parent={"page_id": _PARENT_BUDGET_ID},
-            properties={"title": [{"text": {"content": titulo}}]},
-            children=bloques[:100],
-        )
-        # Bloques adicionales si superan el límite de 100 por llamada
-        for i in range(100, len(bloques), 100):
-            client.blocks.children.append(
-                block_id=nueva["id"],
-                children=bloques[i:i + 100],
-            )
-        logger.info(f"Página del mes creada: '{titulo}' | id={nueva['id']}")
+        pg = _resetear_filas(client, NOTION_PROYECCIONES_GASTOS_DB_ID, {
+            "$ Real ": {"number": 0},
+            "Descripción opcional ": {"rich_text": []},
+            "Etiquetas": {"status": {"name": "Sin empezar"}},
+        })
+        pi = _resetear_filas(client, NOTION_PROYECCIONES_INGRESOS_DB_ID, {
+            "Ganancias Reales ": {"number": 0},
+        })
+        ah = _resetear_filas(client, NOTION_AHORROS_DB_ID, {
+            "AHORRADO ": {"number": 0},
+            "Selección": {"select": {"name": "NO AHORROS"}},
+        })
+        pr = _restaurar_prioridades(client, NOTION_PRIORIDADES_DB_ID)
+        logger.info(f"Reset: proy_gastos={pg}, proy_ing={pi}, ahorros={ah}, prioridades={pr}")
+
+        if bot:
+            chat_id = load_chat_id()
+            if chat_id:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🗓️ ¡Nuevo mes iniciado!\n"
+                        f"Todas las tablas reseteadas para *{mes} {hoy.year}*.\n"
+                        f"Los valores proyectados se mantienen.\n"
+                        f"¡A darle con todo! 💪"
+                    ),
+                    parse_mode="Markdown",
+                )
+        return True
+
     except Exception as e:
-        logger.error(f"Error creando página del mes nuevo: {e}")
+        logger.error(f"Error en reset_mes_nuevo: {e}")
+        return False
 
 
 # ── Scheduler principal ───────────────────────────────────────────────────────
@@ -234,8 +265,8 @@ def build_scheduler(bot) -> AsyncIOScheduler:
     """
     Configura el scheduler con 3 tareas:
     - Cada día 09:30 → alertas de pagos próximos + actualizar prioridades
-    - Día 1 a las 00:01 → crear página del mes nuevo en Notion
-    - Día 1 a las 08:00 → enviar reporte del mes anterior por Telegram
+    - Día 1 a las 00:01 → reset mensual de la página maestra
+    - Día 1 a las 08:00 → reporte del mes anterior por Telegram
     """
     scheduler = AsyncIOScheduler(timezone="America/Guayaquil")
 
@@ -259,18 +290,18 @@ def build_scheduler(bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # ── Job 2: crear página del mes nuevo ──────────────────────────────
-    async def _job_mes_nuevo():
-        await crear_mes_nuevo()
+    # ── Job 2: reset mensual ────────────────────────────────────────────
+    async def _job_reset():
+        await reset_mes_nuevo(bot)
 
     scheduler.add_job(
-        _job_mes_nuevo,
+        _job_reset,
         CronTrigger(day=1, hour=0, minute=1, timezone="America/Guayaquil"),
-        id="mes_nuevo",
+        id="reset_mensual",
         replace_existing=True,
     )
 
-    # ── Job 3: reporte mensual ─────────────────────────────────────────
+    # ── Job 3: reporte mensual ──────────────────────────────────────────
     async def _job_reporte():
         chat_id = load_chat_id()
         if not chat_id:

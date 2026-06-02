@@ -13,7 +13,7 @@ from telegram.ext import (
 from config.settings import TELEGRAM_BOT_TOKEN
 from bot.handlers import handle_text, handle_photo, handle_callback
 from bot.commands import cmd_start, cmd_ayuda, cmd_balance, cmd_pendientes, cmd_ahorros, cmd_prioridades
-from bot.scheduler import build_scheduler, catchup_mes_nuevo
+from bot.scheduler import build_scheduler
 
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
@@ -49,8 +49,6 @@ async def _post_init(app: Application) -> None:
     scheduler.start()
     app.bot_data["scheduler"] = scheduler
     logger.info("Scheduler iniciado — alertas diarias a las 9:30 AM (Ecuador).")
-    # Catch-up: si el proceso reinició en día 1 y la página aún no existe, la crea
-    await catchup_mes_nuevo()
 
 
 async def _post_shutdown(app: Application) -> None:
