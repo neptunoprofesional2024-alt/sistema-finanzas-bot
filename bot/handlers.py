@@ -87,6 +87,14 @@ logger = logging.getLogger(__name__)
 
 
 def _load_authorized_id() -> int | None:
+    # 1. Variable de entorno (persiste en Railway entre redeployments)
+    env_val = os.getenv("TELEGRAM_CHAT_ID")
+    if env_val:
+        try:
+            return int(env_val.strip())
+        except ValueError:
+            pass
+    # 2. Archivo en disco (fallback local)
     try:
         with open(_CHAT_ID_FILE) as f:
             return int(f.read().strip())
@@ -94,9 +102,8 @@ def _load_authorized_id() -> int | None:
         return None
 
 
-# Cache del chat_id autorizado — se lee del disco una sola vez al arrancar.
-# Si .chat_id aún no existe (primer arranque), se recarga en cada mensaje
-# hasta que /start lo cree, momento en que se fija para siempre.
+# Cache del chat_id autorizado — se inicializa al arrancar.
+# Prioridad: env var TELEGRAM_CHAT_ID > archivo .chat_id > None (permite todo hasta /start)
 _AUTHORIZED_CHAT_ID: int | None = _load_authorized_id()
 
 
@@ -106,10 +113,15 @@ def _is_authorized(update: Update) -> bool:
     if chat_id is None:
         return False
     if _AUTHORIZED_CHAT_ID is None:
-        # Intentar cargar por si /start ya escribió el archivo
+        # Sin chat_id configurado: reintenta cargar y permite temporalmente
         _AUTHORIZED_CHAT_ID = _load_authorized_id()
-        return True  # Permite hasta que se establezca
-    return chat_id == _AUTHORIZED_CHAT_ID
+        if _AUTHORIZED_CHAT_ID is None:
+            logger.info(f"Sin TELEGRAM_CHAT_ID configurado — permitiendo chat_id={chat_id} temporalmente")
+        return True
+    authorized = chat_id == _AUTHORIZED_CHAT_ID
+    if not authorized:
+        logger.warning(f"Acceso denegado: chat_id={chat_id}, autorizado={_AUTHORIZED_CHAT_ID}")
+    return authorized
 
 def _normalizar_nombre(s: str) -> str:
     return _WS_RE.sub(" ", s).strip().lower()

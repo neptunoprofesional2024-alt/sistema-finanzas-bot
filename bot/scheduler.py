@@ -42,6 +42,13 @@ _PRIORIDADES_FALTA_INICIAL: list[tuple[str, float]] = [
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_chat_id() -> int | None:
+    # Prioridad: env var (persiste en Railway) > archivo en disco
+    env_val = os.getenv("TELEGRAM_CHAT_ID")
+    if env_val:
+        try:
+            return int(env_val.strip())
+        except ValueError:
+            pass
     try:
         with open(CHAT_ID_FILE) as f:
             return int(f.read().strip())
@@ -50,11 +57,17 @@ def load_chat_id() -> int | None:
 
 
 def save_chat_id(chat_id: int) -> None:
+    # Actualiza caché en handlers para que surta efecto sin reiniciar
+    try:
+        import bot.handlers as _h
+        _h._AUTHORIZED_CHAT_ID = chat_id
+    except Exception:
+        pass
     try:
         with open(CHAT_ID_FILE, "w") as f:
             f.write(str(chat_id))
     except Exception as e:
-        logger.warning(f"No se pudo guardar chat_id: {e}")
+        logger.warning(f"No se pudo guardar chat_id en disco: {e}")
 
 
 def _proxima_fecha_pago(dia: int) -> date:
