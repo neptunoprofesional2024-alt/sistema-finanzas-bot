@@ -34,6 +34,8 @@ def safe_query(db_id: str, **kwargs) -> list[dict]:
 
     except APIResponseError as e:
         raise RuntimeError(f"Error consultando Notion (DB: {db_id}): {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"Error de red al consultar Notion (DB: {db_id}): {e}") from e
 
     return results
 
@@ -48,6 +50,8 @@ def create_page(db_id: str, properties: dict) -> dict:
         )
     except APIResponseError as e:
         raise RuntimeError(f"Error creando página en Notion (DB: {db_id}): {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"Error de red al crear página en Notion (DB: {db_id}): {e}") from e
 
 
 def update_page(page_id: str, properties: dict) -> dict:
@@ -57,3 +61,5 @@ def update_page(page_id: str, properties: dict) -> dict:
         return client.pages.update(page_id=page_id, properties=properties)
     except APIResponseError as e:
         raise RuntimeError(f"Error actualizando página {page_id}: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"Error de red al actualizar página {page_id}: {e}") from e

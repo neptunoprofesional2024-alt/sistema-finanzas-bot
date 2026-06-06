@@ -169,28 +169,34 @@ def _get_gasto_tarjetas() -> float:
     """
     Suma todos los gastos de categoría 'créditos y responsabilidades' del mes actual.
     Representa lo acumulado en tarjetas que habrá que pagar el mes siguiente.
+    Retorna 0.0 ante cualquier error (monto_fijo se usará como fallback).
     """
-    from config.settings import NOTION_GASTOS_DB_ID
-    from datetime import date
-    hoy = date.today()
-    start = f"{hoy.year}-{hoy.month:02d}-01"
-    end = (f"{hoy.year + 1}-01-01" if hoy.month == 12
-           else f"{hoy.year}-{hoy.month + 1:02d}-01")
-    filtro = {
-        "and": [
-            {"property": "Detalle del gasto. ", "select": {"equals": "créditos y responsabilidades"}},
-            {"property": "Fecha", "date": {"on_or_after": start}},
-            {"property": "Fecha", "date": {"before": end}},
-        ]
-    }
-    pages = safe_query(NOTION_GASTOS_DB_ID, filter=filtro)
-    return sum((p["properties"].get("Cantidad ", {}).get("number") or 0) for p in pages)
+    try:
+        from config.settings import NOTION_GASTOS_DB_ID
+        hoy = date.today()
+        start = f"{hoy.year}-{hoy.month:02d}-01"
+        end = (f"{hoy.year + 1}-01-01" if hoy.month == 12
+               else f"{hoy.year}-{hoy.month + 1:02d}-01")
+        filtro = {
+            "and": [
+                {"property": "Detalle del gasto. ", "select": {"equals": "créditos y responsabilidades"}},
+                {"property": "Fecha", "date": {"on_or_after": start}},
+                {"property": "Fecha", "date": {"before": end}},
+            ]
+        }
+        pages = safe_query(NOTION_GASTOS_DB_ID, filter=filtro)
+        return sum((p["properties"].get("Cantidad ", {}).get("number") or 0) for p in pages)
+    except Exception:
+        return 0.0
 
 
 # ── Datos de proyecciones ────────────────────────────────────────────────────
 
 def _get_proyecciones_data() -> dict:
-    """Retorna {titulo_fila: {real, proyectado}} leyendo proyecciones de egresos una sola vez."""
+    """
+    Retorna {titulo_fila: {real, proyectado}} leyendo proyecciones de egresos una sola vez.
+    Propaga RuntimeError para que calcular_prioridades() falle limpiamente si Notion no responde.
+    """
     from config.settings import NOTION_PROYECCIONES_GASTOS_DB_ID
     pages = safe_query(NOTION_PROYECCIONES_GASTOS_DB_ID)
     result: dict = {}
