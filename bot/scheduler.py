@@ -42,13 +42,14 @@ _PRIORIDADES_FALTA_INICIAL: list[tuple[str, float]] = [
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_chat_id() -> int | None:
-    # Prioridad: env var (persiste en Railway) > archivo en disco
+    # Prioridad 1: env var (persiste en Railway entre redeployments)
     env_val = os.getenv("TELEGRAM_CHAT_ID")
     if env_val:
         try:
             return int(env_val.strip())
         except ValueError:
             pass
+    # Prioridad 2: archivo en disco (local dev o si /start fue enviado en esta sesión)
     try:
         with open(CHAT_ID_FILE) as f:
             return int(f.read().strip())

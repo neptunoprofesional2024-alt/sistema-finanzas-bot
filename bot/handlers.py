@@ -87,40 +87,43 @@ logger = logging.getLogger(__name__)
 
 
 def _load_authorized_id() -> int | None:
-    # 1. Variable de entorno (persiste en Railway entre redeployments)
+    """
+    Retorna el chat_id autorizado SOLO desde la variable de entorno TELEGRAM_CHAT_ID.
+    Si la env var no está configurada, retorna None → modo abierto temporal.
+    El archivo .chat_id ya no se usa para la verificación de seguridad,
+    pero se mantiene para compatibilidad con save_chat_id().
+    """
     env_val = os.getenv("TELEGRAM_CHAT_ID")
     if env_val:
         try:
             return int(env_val.strip())
         except ValueError:
-            pass
-    # 2. Archivo en disco (fallback local)
-    try:
-        with open(_CHAT_ID_FILE) as f:
-            return int(f.read().strip())
-    except Exception:
-        return None
+            logger.error(f"TELEGRAM_CHAT_ID inválido: {env_val!r} — no es un número")
+    return None
 
 
-# Cache del chat_id autorizado — se inicializa al arrancar.
-# Prioridad: env var TELEGRAM_CHAT_ID > archivo .chat_id > None (permite todo hasta /start)
+# Chat_id autorizado. None = env var no configurada = modo abierto temporal.
 _AUTHORIZED_CHAT_ID: int | None = _load_authorized_id()
 
 
 def _is_authorized(update: Update) -> bool:
-    global _AUTHORIZED_CHAT_ID
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id is None:
         return False
     if _AUTHORIZED_CHAT_ID is None:
-        # Sin chat_id configurado: reintenta cargar y permite temporalmente
-        _AUTHORIZED_CHAT_ID = _load_authorized_id()
-        if _AUTHORIZED_CHAT_ID is None:
-            logger.info(f"Sin TELEGRAM_CHAT_ID configurado — permitiendo chat_id={chat_id} temporalmente")
+        # TELEGRAM_CHAT_ID no está configurada en Railway.
+        # Permite todos los mensajes y registra el chat_id para que el dueño
+        # lo pueda ver en los logs y configurar la env var.
+        logger.info(
+            f"[OPEN MODE] Mensaje de chat_id={chat_id} — "
+            f"Configura TELEGRAM_CHAT_ID={chat_id} en Railway para activar seguridad."
+        )
         return True
     authorized = chat_id == _AUTHORIZED_CHAT_ID
     if not authorized:
-        logger.warning(f"Acceso denegado: chat_id={chat_id}, autorizado={_AUTHORIZED_CHAT_ID}")
+        logger.warning(
+            f"Acceso denegado: chat_id={chat_id} != autorizado={_AUTHORIZED_CHAT_ID}"
+        )
     return authorized
 
 def _normalizar_nombre(s: str) -> str:
