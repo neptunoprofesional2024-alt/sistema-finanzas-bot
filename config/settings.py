@@ -22,7 +22,7 @@ PAGOS_FIJOS = {
     },
     "Tarjeta de crédito Pacifico (Laptop)": {
         "dia": 5,
-        "monto": 205,
+        "monto": 295,
         "descripcion": "Tarjeta Pacífico - máximo día 5",
         "es_tarjeta_credito": True,
     },

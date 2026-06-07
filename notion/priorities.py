@@ -19,7 +19,7 @@ _CONCEPTO_CONFIG: dict = {
         "dia_vencimiento": 5,
         "tipo": "deuda",
         "proyeccion_fila": "Tarjeta de crédito Pacifico (Laptop)",
-        "monto_fijo": 205,
+        "monto_fijo": 295,
         "es_tarjeta_credito": True,
     },
     "Tarjeta Pichincha": {

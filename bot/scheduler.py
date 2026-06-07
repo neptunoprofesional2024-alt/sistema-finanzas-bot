@@ -22,7 +22,7 @@ _MESES_ES_MAYUS = {
 # Montos "Falta" iniciales por concepto al arrancar el mes nuevo.
 # Coinciden con el $ Proyección de cada fila en la tabla de prioridades.
 _PRIORIDADES_FALTA_INICIAL: list[tuple[str, float]] = [
-    ("Tarjeta Pacífico (Laptop)", 205),
+    ("Tarjeta Pacífico (Laptop)", 295),
     ("Pago Coral",                130),
     ("Alimentación hogar",        212),
     ("Recarga/plan",               20),
