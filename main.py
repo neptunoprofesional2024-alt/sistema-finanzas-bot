@@ -62,7 +62,10 @@ def main() -> None:
     if not TELEGRAM_BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN no está definido en el .env")
 
-    _start_health_server()
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_ID"):
+        _start_health_server()
+    else:
+        logger.info("Entorno local — health server desactivado.")
 
     app = (
         Application.builder()
