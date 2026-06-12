@@ -108,6 +108,12 @@ _CONCEPTO_CONFIG: dict = {
         "proyeccion_fila": "AHORRO PARA ENTRADA DE CASA: ",
         "monto_fijo": 800,
     },
+    "Parqueo moto edificio": {
+        "dia_vencimiento": 26,
+        "tipo": "transporte",
+        "proyeccion_fila": "Parqueo moto edificio",
+        "monto_fijo": 25,
+    },
 }
 
 # Compatibilidad con update_prioridad() en queries.py

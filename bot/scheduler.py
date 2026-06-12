@@ -36,6 +36,7 @@ _PRIORIDADES_FALTA_INICIAL: list[tuple[str, float]] = [
     ("Viaje playa",               400),
     ("Proteínas/entrenamiento",   400),
     ("Ahorro casa",               800),
+    ("Parqueo moto edificio",      25),
 ]
 
 

@@ -189,6 +189,9 @@ _CATEGORIA_KEYWORDS: list[tuple[list[str], str, str]] = [
      "Taxis personales\xa0", "Taxis personales"),
     (["transporte público", "transporte publico", "bus", "metro", "buseta"],
      "Tranporte Público ", "Transporte Público"),
+    (["parqueo moto", "parqueadero moto", "parqueo edificio", "parqueadero edificio",
+      "parqueo", "parqueadero"],
+     "Parqueo moto edificio", "Mantenimiento de Moto"),
     (["gasolina moto", "transporte moto", "gasolina", "combustible", "tanquear", "moto"],
      "Transporte en moto ", "Gasolina para la Moto"),
     (["tarjeta pacífico", "tarjeta pacifico", "banco pacífico", "banco pacifico",
@@ -271,6 +274,7 @@ _COMPLETAR_CONCEPTO_MAP: list[tuple[list[str], str]] = [
     (["cursos", "libros"],                                "Cursos/libros"),
     (["seminarios", "talleres"],                          "Seminarios/talleres"),
     (["ahorro casa", "entrada casa"],                     "Ahorro casa"),
+    (["parqueo", "parqueadero"],                          "Parqueo moto edificio"),
 ]
 
 

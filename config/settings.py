@@ -52,6 +52,11 @@ PAGOS_FIJOS = {
         "monto": 20,
         "descripcion": "Agua potable",
     },
+    "Parqueo moto edificio": {
+        "dia": 26,
+        "monto": 25,
+        "descripcion": "Parqueo moto edificio",
+    },
 }
 
 # Categorías exactas de gastos en Notion
